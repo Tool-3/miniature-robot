@@ -1,57 +1,125 @@
-# File: app.py
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
-from textblob import TextBlob
-from sklearn.linear_model import LinearRegression
+import requests
+from bs4 import BeautifulSoup
 import datetime
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LinearRegression
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # Helper functions
 
 def scrape_index_data():
-    # Placeholder for actual scraping logic
-    # For demonstration, we use Yahoo Finance to get data
-    data = yf.download('^GSPC', period='1y')
+    url = 'https://finance.yahoo.com/quote/%5EGSPC/history?p=%5EGSPC'
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
+    }
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    rows = soup.find_all('tr', class_='BdT')
+    
+    dates = []
+    closes = []
+    for row in rows:
+        cols = row.find_all('td')
+        if len(cols) >= 5:
+            date = cols[0].text
+            close = cols[4].text
+            try:
+                date = datetime.datetime.strptime(date, '%b %d, %Y')
+                close = float(close.replace(',', ''))
+                dates.append(date)
+                closes.append(close)
+            except ValueError:
+                continue
+
+    data = pd.DataFrame({'Date': dates, 'Close': closes})
+    data.set_index('Date', inplace=True)
     return data
 
 def clean_data(data):
-    # Placeholder for actual cleaning logic
     data = data.dropna()
     return data
 
 def technical_analysis(data):
-    # Simple moving average as an example of technical analysis
     data['SMA'] = data['Close'].rolling(window=20).mean()
+    data['RSI'] = compute_rsi(data['Close'])
+    data['MACD'], data['Signal_Line'] = compute_macd(data['Close'])
     data['Signal'] = np.where(data['Close'] > data['SMA'], 1, 0)
     return data
 
+def compute_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=period).mean()
+    avg_loss = loss.rolling(window=period).mean()
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def compute_macd(series, fast=12, slow=26, signal=9):
+    fast_ema = series.ewm(span=fast, min_periods=fast).mean()
+    slow_ema = series.ewm(span=slow, min_periods=slow).mean()
+    macd = fast_ema - slow_ema
+    signal_line = macd.ewm(span=signal, min_periods=signal).mean()
+    return macd, signal_line
+
 def price_prediction(data):
-    # Linear regression for price prediction as a placeholder
-    model = LinearRegression()
-    data['Prediction'] = data['Close'].shift(-30)
-    X = np.array(data.drop(['Prediction'], 1))[:-30]
-    y = np.array(data['Prediction'])[:-30]
-    model.fit(X, y)
-    future = np.array(data.drop(['Prediction'], 1))[-30:]
+    # Prepare data for LSTM
+    data = data[['Close']]
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data)
+    
+    prediction_days = 60
+
+    X_train, y_train = [], []
+    for x in range(prediction_days, len(scaled_data)):
+        X_train.append(scaled_data[x-prediction_days:x, 0])
+        y_train.append(scaled_data[x, 0])
+
+    X_train, y_train = np.array(X_train), np.array(y_train)
+    X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+    
+    # Build LSTM model
+    model = Sequential()
+    model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
+    model.add(LSTM(units=50))
+    model.add(Dense(1))
+
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.fit(X_train, y_train, epochs=25, batch_size=32)
+
+    # Predict future prices
+    test_data = scaled_data[-prediction_days:]
+    X_test = [test_data]
+    X_test = np.array(X_test)
+    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+
+    predicted_price = model.predict(X_test)
+    predicted_price = scaler.inverse_transform(predicted_price)
     data['Predicted_Price'] = np.nan
-    data.iloc[-30:, data.columns.get_loc('Predicted_Price')] = model.predict(future)
+    data.iloc[-1, data.columns.get_loc('Predicted_Price')] = predicted_price[0][0]
+    
     return data
 
 def sentiment_analysis(data):
-    # Placeholder for sentiment analysis
-    data['Sentiment'] = data['Close'].apply(lambda x: TextBlob(str(x)).sentiment.polarity)
+    analyzer = SentimentIntensityAnalyzer()
+    data['Sentiment'] = data['Close'].apply(lambda x: analyzer.polarity_scores(str(x))['compound'])
     return data
 
 def combined_analysis(data):
-    # Combine technical and sentiment analysis for predictions
     data['Combined_Signal'] = data['Signal'] + data['Sentiment']
     data['Combined_Signal'] = np.where(data['Combined_Signal'] > 1, 1, 0)
     return data
 
 def generate_signals(data):
-    # Generate buy/sell signals with stop-loss
     data['Buy'] = np.where(data['Combined_Signal'] == 1, data['Close'], np.nan)
     data['Sell'] = np.where(data['Combined_Signal'] == 0, data['Close'], np.nan)
     data['Stop_Loss'] = data['Close'] * 0.95
