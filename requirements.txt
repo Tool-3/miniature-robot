@@ -1,4 +1,4 @@
---upgrade pip
+pip
 streamlit 
 pandas
 numpy 
@@ -6,5 +6,5 @@ requests
 beautifulsoup4
 textblob 
 scikit-learn
-tensorflow
+tensorflow=2.4.1
 vaderSentiment
