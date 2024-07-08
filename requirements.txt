@@ -1,6 +1,10 @@
+
 streamlit 
-pandas 
+pandas
 numpy 
-yfinance 
+requests 
+beautifulsoup4
 textblob 
 scikit-learn
+tensorflow 
+vaderSentiment
