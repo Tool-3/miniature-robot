@@ -6,7 +6,6 @@ from bs4 import BeautifulSoup
 import datetime
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.linear_model import LinearRegression
-import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
